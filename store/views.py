@@ -11,12 +11,14 @@ from django.core.mail import EmailMessage
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
 from django.template.loader import render_to_string
+from django.urls import reverse
+from .Paytm import checksum
 from .models import *
 from .filters import ItemFilter
 import json
 import datetime
+import stripe
 # Create your views here.
-
 def home(request):
     if request.user.is_authenticated:
         customer = request.user
@@ -51,9 +53,7 @@ def cart(request):
     categories = Categories.objects.all()
     total = order.get_cart_total
     tax = (5*total)/100
-    print(tax)
     grandTotal = tax + total
-    print(grandTotal)
     context = {'items':items , 'order':order,'cartItems':cartItems,'categories':categories,'grandTotal':grandTotal,'tax':tax}
     return render(request,'store/cart.html',context)
 
@@ -113,6 +113,7 @@ def checkout(request):
     total = order.get_cart_total
     tax = (5*total)/100
     grandTotal = tax + total
+    print(order.get_cart_item)
     context = {'items':items , 'order':order,'cartItems':cartItems,'categories':categories,'address':address,'tax':tax,'grandTotal':grandTotal}
     return render(request,'store/checkout.html',context)
 
@@ -138,53 +139,72 @@ def updateItem(request):
 
 def processOrder(request):
     if request.method=="POST":
-        transaction_id = datetime.datetime.now().timestamp()
-        data = json.loads(request.body)
+        data = request.POST.get('groupOfDefaultRadios')
+        if request.POST.get('payment')=="cod":
+            return redirect('checkout')
+        # transaction_id = datetime.datetime.now().timestamp()
+        # data = json.loads(request.body)
         if request.user.is_authenticated:
             customer = request.user
             order, created = Order.objects.get_or_create(customer=customer , complete=False)
-            order.transaction_id = transaction_id
+            if order.get_cart_item<=0:
+                return redirect('checkout')
+            # order.transaction_id = transaction_id
             tax = (5*order.get_cart_total)/100
             grandTotal = tax + order.get_cart_total
-            order.total = order.get_cart_total
-            order.tax = tax
-            order.grandtotal = grandTotal
-            order.complete = True
-            order.status = 'Order Processing'
-            order.save()
-            items = order.orderitem_set.all()
-            for item in items:
-                prod = Product.objects.get(id=item.product.id)
-                item.sp = item.get_total
-                item.save()
-                prod.stock -= item.quantity
-                if prod.stock<=0:
-                    prod.available = False
-                prod.save()
-            request.session['prod_id']=order.id
-            request.session['custom_url'] = int(data['customurl'])
+            # order.total = order.get_cart_total
+            # order.tax = tax
+            # order.grandtotal = grandTotal
+            # order.complete = True
+            # order.status = 'Order Processing'
+            # order.save()
+            # items = order.orderitem_set.all()
+            # for item in items:
+            #     prod = Product.objects.get(id=item.product.id)
+            #     item.sp = item.get_total
+            #     item.save()
+            #     prod.stock -= item.quantity
+            #     if prod.stock<=0:
+            #         prod.available = False
+            #     prod.save()
+            # request.session['prod_id']=order.id
+            # request.session['address_id']=data
+            # request.session['customer_id']= request.user.id
+            # request.session['transaction_id']=transaction_id
+            # request.session['custom_url'] = int(data['customurl'])
             if order.shipping == True:
-                shippingaddress=ShippingAddress.objects.get(id=int(data['address_id']))
+                shippingaddress=ShippingAddress.objects.get(id=int(data))
                 address = AllAddresses.objects.get(mainaddressmodel=shippingaddress)
                 order.address = address
                 order.date_orderd = datetime.date.today()
             order.save()
-            # params = {
-            # 'MID':'WorldP64425807474247',
-            # 'ORDER_ID':'dddgfgfeeed',
-            # 'TXN_AMOUNT':'1',
-            # 'CUST_ID':'acfff@paytm.com',
-            # 'INDUSTRY_TYPE_ID':'Retail',
-            # 'WEBSITE':'worldpressplg',
-            # 'CHANNEL_ID':'WEB',
-            # #'CALLBACK_URL':'http://localhost/pythonKit/response.cgi',
-            # }
+            params = {
+             'MID':'GJrYCg15603646443443',
+             'ORDER_ID':str(order.id),
+             'TXN_AMOUNT': str(grandTotal),
+             'CUST_ID': str(request.user.id),
+             'INDUSTRY_TYPE_ID':'Retail',
+             'WEBSITE':'WEBSTAGING',
+             'CHANNEL_ID':'WEB',
+             'CALLBACK_URL':'http://127.0.0.1:8000/handlerequest/',
+            }
+            params['CHECKSUMHASH'] = checksum.generate_checksum(param_dict=params,merchant_key= "ke3Q@9&y8857%kZ&")
+            request.session['params'] = json.dumps(params)
+            return redirect('paytm')
         else:
             print('User is not logged in...')
     else:
         return HttpResponse("ERROR")
 
     return JsonResponse('Payment Complete!', safe=False)
+    
+
+def paytm(request):
+    params = request.session['params']
+    del request.session['params']
+    params = json.loads(params)
+    return render(request, 'store/paytm.html',{'params':params})
+
 
 def search(request):
     if request.user.is_authenticated:
@@ -232,7 +252,8 @@ def loginPage(request):
             context = {'cartItems':cartItems,'categories':categories}
             return render(request,'store/login.html',context)
     else:
-        return HttpResponse("ERROR")
+
+        return HttpResponse("You are already logged in")
 
 
 def registerPage(request):
@@ -414,16 +435,15 @@ def success_handler(request):
     
         
 def success(request,myid):
-    if myid == request.session.get('custom_url'):
-        try:
-            order=Order.objects.get(id=request.session['prod_id'],customer=request.user.id)
-        except:
-            return HttpResponse('error')
-        customer = request.user
-        items = order.orderitem_set.all()
-        context = {'customer':customer,'order':order,'items':items}
-        if order.complete==True:
-            return render(request, 'store/success.html',context)
+    try:
+        order=Order.objects.get(id=myid)
+    except:
+        return HttpResponse('error')
+    customer = order.customer
+    items = order.orderitem_set.all()
+    context = {'customer':customer,'order':order,'items':items}
+    if order.complete==True:
+        return render(request, 'store/success.html',context)
     else:
         return HttpResponse('error')
 
@@ -576,8 +596,83 @@ def update_address(request,myid):
     return render(request, 'store/update_address.html',context)
 @csrf_exempt
 def handlerequest(request):
-    #post request by paytm
-    pass
+    # post request by paytm
+    if request.method == 'POST':
+        try:
+            form = request.POST
+            response_dict = {}
+            for i in form.keys():
+                response_dict[i] = form[i]
+                if i == "CHECKSUMHASH":
+                    check_sum = form[i]
+            verify = checksum.verify_checksum(param_dict=response_dict,merchant_key= "ke3Q@9&y8857%kZ&",checksum=check_sum)
+            order = Order.objects.get(id=request.POST.get('ORDERID'), complete=False)
+            customer = order.customer
+            if verify:
+                if response_dict['RESPCODE'] == '01':
+                    print(request.POST)
+                    order.transaction_id = request.POST.get('TXNID')
+                    tax = (5*order.get_cart_total)/100
+                    grandTotal = tax + order.get_cart_total
+                    order.total = order.get_cart_total
+                    order.tax = tax
+                    order.grandtotal = grandTotal
+                    order.complete = True
+                    order.status = 'Order Processing'
+                    order.save()
+                    items = order.orderitem_set.all()
+                    for item in items:
+                        prod = Product.objects.get(id=item.product.id)
+                        item.sp = item.get_total
+                        item.save()
+                        prod.stock -= item.quantity
+                        if prod.stock<=0:
+                            prod.available = False
+                        prod.save()  
+                    context = {'customer':customer,'order':order,'items':items}
+                    emaildata = {'name':customer.first_name,'customer':customer,'order':order,'items':items}
+                    template = render_to_string('store/email_template.html',emaildata)
+                    email = EmailMessage(
+                        'Thanks for your purchase',
+                        template,
+                        settings.EMAIL_HOST_USER,
+                        [customer.email]
+                    )
+                    email.fail_silently = False
+                    email.send()
+                    return render(request, 'store/success.html',context)
+                else:
+                    items = order.orderitem_set.all()
+                    new_order, created = Order.objects.get_or_create(customer=customer, complete=False,transaction_id=datetime.datetime.now().timestamp())
+                    for item in items:
+                        item.order=new_order
+                        item.save()
+                    new_order.transaction_id = ""
+                    new_order.save()
+                    order.delete()
+                    messages.error(request,response_dict['RESPMSG'])
+                    return redirect('checkout') 
+            else:
+                items = order.orderitem_set.all()
+                new_order, created = Order.objects.get_or_create(customer=customer, complete=False,transaction_id=datetime.datetime.now().timestamp())
+                for item in items:
+                    item.order=new_order
+                    item.save()
+                new_order.transaction_id = ""
+                new_order.save()
+                order.delete()
+                messages.error(request,response_dict['RESPMSG'])
+                return redirect('checkout')
+            # if order.shipping == True:
+            #     shippingaddress=ShippingAddress.objects.get(id=int(request.session['address_id']))
+            #     address = AllAddresses.objects.get(mainaddressmodel=shippingaddress)
+            #     order.address = address
+            #     order.date_orderd = datetime.date.today()
+            # order.save()   
+        except:
+            return HttpResponse('ERROR1')
+    else:
+        return HttpResponse('ERROR2')
 
 
 
@@ -594,3 +689,5 @@ def del_session(request):
         except KeyError:
             pass
     return HttpResponse("ERROR PAGE")
+
+

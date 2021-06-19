@@ -32,7 +32,7 @@ class UserAdminConfig(UserAdmin):
 
 class Items(admin.ModelAdmin):
     search_fields = ('order',)
-    list_display = ['order','product','quantity']
+    list_display = ['id','order','product','quantity']
     
 class ProductImageInline(admin.TabularInline):
     model = Images

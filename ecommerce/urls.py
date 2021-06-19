@@ -46,6 +46,7 @@ urlpatterns = [
     path('profile/change_password/',views.changePassword,name='change_password'),
     path('add_multiple_prod/',views.addmultipleProd,name='add_multiple_prod'),
     path('handlerequest/',views.handlerequest,name='handlerequest'),
+    path('paytm/',views.paytm,name='paytm'),
     #
     path('reset_password/',auth_views.PasswordResetView.as_view(template_name='store/reset_password.html'),name='reset_password'),
     path('reset_password_sent/',auth_views.PasswordResetDoneView.as_view(template_name='store/reset_password_sent.html'),name='password_reset_done'),
