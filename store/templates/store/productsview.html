@@ -398,6 +398,9 @@
                 <button class="btn btn-success btn-md mr-1 mb-2 my-disabled"><strong>Out of Stock</strong></button>
                 {% endif %}
               </form>
+              <div id="spinner" class="spinner-border hidden" role="status">
+                <span class="sr-only">Loading...</span>
+              </div>
               <div class='notify hidden alert alet-info'>
 
               </div>
@@ -729,6 +732,8 @@
     form.addEventListener("submit", submitHandler);
   }
   function submitHandler(e) {
+    var spin = document.getElementById("spinner");
+    spin.classList.remove("hidden");
     e.preventDefault()
     $.ajax({
       type: "POST",
@@ -736,6 +741,7 @@
       data: $("#add-prod-form").serialize(),
       dataType: "json",
       success: function (data) {
+        spin.classList.add("hidden")
         form.reset()
         if (data.item) {
 
